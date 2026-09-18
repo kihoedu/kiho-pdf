@@ -60,20 +60,22 @@ npm run preview                                 # http://localhost:4173 에서 �
 
 ### 4-2. GitHub Pages (권장)
 
-최초 1회:
+최초 1회(이 저장소는 2026-09-19 에 설정을 마쳤고 첫 배포가 나가 있다):
 
 1. 저장소 **Settings → Pages → Build and deployment → Source** 를 **GitHub Actions** 로 바꾼다.
 2. (선택) 사용자 지정 도메인을 쓰면 같은 화면의 **Custom domain** 에 입력하고 DNS 에 CNAME 을 건다. **Enforce HTTPS** 를 켠다.
 
-배포:
+배포(main 에 올린 뒤):
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0        # .github/workflows/deploy.yml 이 테스트 → 빌드 → 배포
+gh workflow run "Deploy (GitHub Pages)" --ref main   # 단위 테스트 → 빌드 → 배포
+gh run watch                                          # 끝날 때까지 지켜본다
+git tag v0.2.0 && git push origin v0.2.0              # 배포한 커밋에 버전 태그를 남긴다
 ```
 
-또는 **Actions → Deploy (GitHub Pages) → Run workflow** 로 수동 실행한다.
-롤백은 이전 태그를 골라 같은 워크플로를 다시 실행한다.
+또는 **Actions → Deploy (GitHub Pages) → Run workflow**(브랜치 main)로 실행한다.
+`github-pages` 환경은 `main` 브랜치의 배포만 허용하므로 태그나 다른 브랜치에서는 실행해도 거부된다.
+롤백은 되돌릴 커밋을 main 에 올린(`git revert`) 뒤 같은 워크플로를 다시 실행한다.
 
 ### 4-3. Google Cloud — Firebase Hosting
 

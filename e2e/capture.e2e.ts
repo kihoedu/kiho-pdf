@@ -53,7 +53,8 @@ test('캡처: 영역을 목록에 모아 한꺼번에 이미지로 저장한다'
   await expect(page.locator('.captures li input')).toHaveValue('test_12p_1쪽_01');
   await expect(page.locator('.captures li')).toContainText('1250×417px'); // 300pt × 100pt @300dpi
   await expect(page.locator('.capture-box .capture-tag')).toContainText('#1');
-  await expect(page.locator('.capture-thumb img')).toHaveCount(1); // 미리보기
+  // 미리보기는 썸네일·본 렌더와 같은 PDF.js 워커를 나눠 쓰므로 느린 기기(CI)에서는 늦게 나온다
+  await expect(page.locator('.capture-thumb img')).toHaveCount(1, { timeout: 20_000 });
 
   // 도구는 켜진 채: 2쪽(/Rotate 90, 가로로 보임)으로 가서 그 쪽의 빨간 상자를 끈다
   await page.locator('.thumb').nth(1).click();

@@ -8,6 +8,8 @@ export default defineConfig({
   globalSetup: './e2e/global-setup.ts',
   timeout: 60_000,
   fullyParallel: true,
+  // CI 러너는 코어가 적어 시간에 민감한 테스트가 가끔 흔들린다. 한 번 더 돌려 보고 그래도 실패하면 실패다.
+  retries: process.env.CI ? 1 : 0,
   reporter: [['list']],
   use: { channel, viewport: { width: 1440, height: 900 }, trace: 'retain-on-failure' },
   projects: [

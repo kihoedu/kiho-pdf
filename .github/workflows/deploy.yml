@@ -1,9 +1,9 @@
 name: Deploy (GitHub Pages)
 
-# 배포 절차는 docs/DEPLOY.md 참고. 버전 태그(v*)를 밀거나 수동 실행하면 배포된다.
+# 배포 절차는 docs/DEPLOY.md 참고. main 에서 수동 실행한다:
+#   gh workflow run "Deploy (GitHub Pages)" --ref main
+# (github-pages 환경은 main 브랜치의 배포만 허용한다. 태그 푸시로는 배포할 수 없어 트리거에서 뺐다.)
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
 
 permissions:
