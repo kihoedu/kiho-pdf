@@ -1,6 +1,8 @@
 import * as pdfjs from 'pdfjs-dist';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { devTune } from '../devTune';
+import { EDITS_INFO_KEY } from '../model/editsCodec';
 import type { Box, Rot } from '../model/types';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -53,13 +55,14 @@ export async function openPdf(file: File, password?: string): Promise<LoadedPdf>
     iccUrl: `${ASSET_BASE}iccs/`,
     password,
   };
+  const tune = devTune();
   const task =
-    file.size <= WHOLE_FILE_LIMIT
+    file.size <= (tune.wholeFileLimit ?? WHOLE_FILE_LIMIT)
       ? pdfjs.getDocument({ ...common, data: await file.arrayBuffer() })
       : pdfjs.getDocument({
           ...common,
           range: new FileRangeTransport(file),
-          rangeChunkSize: RANGE_CHUNK,
+          rangeChunkSize: tune.rangeChunk ?? RANGE_CHUNK,
           disableStream: true,
           disableAutoFetch: true,
         });
@@ -77,6 +80,25 @@ export async function openPdf(file: File, password?: string): Promise<LoadedPdf>
     },
     destroy: () => task.destroy(),
   };
+}
+
+export interface DocFlags {
+  /** AcroForm 의 SigFlags 에 "서명 있음" 이 켜져 있다. 수정·저장하면 서명이 무효가 된다. */
+  signed: boolean;
+  /** 이 앱이 삽입 항목 기록과 함께 저장한 파일이다(engine/pieceInfo.ts). */
+  kihoEdits: boolean;
+}
+
+/** 문서 정보(Info)만 읽는 가벼운 확인. 실패해도 여는 데는 지장이 없게 한다. */
+export async function readDocFlags(pdf: PDFDocumentProxy): Promise<DocFlags> {
+  try {
+    const info = (await pdf.getMetadata()).info as { IsSignaturesPresent?: boolean; Custom?: Map<string, unknown> | Record<string, unknown> };
+    const custom = info.Custom;
+    const flag = custom instanceof Map ? custom.get(EDITS_INFO_KEY) : custom?.[EDITS_INFO_KEY];
+    return { signed: !!info.IsSignaturesPresent, kihoEdits: flag !== undefined };
+  } catch {
+    return { signed: false, kihoEdits: false };
+  }
 }
 
 export const pageBox = (page: PDFPageProxy): Box => page.view as Box;

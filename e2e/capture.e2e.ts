@@ -39,6 +39,7 @@ test('캡처: 영역을 목록에 모아 한꺼번에 이미지로 저장한다'
   await page.keyboard.press('t');
   const s = (await page.locator('.page-sheet').boundingBox())!;
   await page.mouse.click(s.x + 120, s.y + 262);
+  await expect(page.locator('.text-box textarea')).toBeFocused(); // 폰트를 받은 뒤에야 상자가 생긴다
   await page.keyboard.type('캡처포함');
   await page.keyboard.press('Escape');
 

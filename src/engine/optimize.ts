@@ -6,6 +6,7 @@ import type { OptimizeOptions, OptimizeStats } from './protocol';
  * 용량 최적화(선택 기능). OCR 품질을 해치지 않는 범위에서만 이미지를 줄인다.
  *
  * 규칙
+ *  - 범위: 쪽의 XObject 와, 그 안의 폼 XObject 가 (몇 겹이든) 품고 있는 이미지.
  *  - 대상: 8비트 회색조/RGB 이미지(JPEG 또는 예측기 없는 Flate/무압축). 1비트(흑백 CCITT/JBIG2)·마스크·CMYK·
  *    투명도가 있는 이미지는 건드리지 않는다.
  *  - 해상도 하한: 이미지가 "쪽을 가득 채워 그려졌다"고 가정한 값으로, 쪽보다 작게 그려진 이미지의 실제 해상도는
@@ -23,22 +24,36 @@ export async function optimizeImages(
   const dpiByRef = new Map<PDFRef, number>();
   for (const page of doc.getPages()) {
     const media = page.getMediaBox();
-    const xobjects = page.node.Resources()?.lookupMaybe(PDFName.of('XObject'), PDFDict);
-    if (!xobjects) continue;
-    for (const [, value] of xobjects.entries()) {
-      if (!(value instanceof PDFRef)) continue;
-      const stream = ctx.lookup(value);
-      if (!(stream instanceof PDFRawStream) || stream.dict.get(PDFName.of('Subtype')) !== PDFName.of('Image')) continue;
-      const w = num(stream.dict, 'Width');
-      const h = num(stream.dict, 'Height');
-      if (!w || !h) continue;
-      const pw = media.width / 72;
-      const ph = media.height / 72;
-      // 이미지가 균일 배율로 쪽 안에 들어간다면, 가장 크게 그려질 때의 해상도는
-      // 세워 그린 경우 max(w/pw, h/ph), 눕혀 그린 경우 max(h/pw, w/ph) 이다. 어느 쪽인지 모르므로 낮은 쪽을 쓴다.
-      const dpi = Math.min(Math.max(w / pw, h / ph), Math.max(h / pw, w / ph));
-      dpiByRef.set(value, Math.min(dpiByRef.get(value) ?? Infinity, dpi));
-    }
+    const pw = media.width / 72;
+    const ph = media.height / 72;
+    // 폼 XObject 는 서로를 참조할 수 있으므로 쪽마다 방문 기록을 두어 순환을 끊는다.
+    const seenForms = new Set<PDFRef>();
+    const visit = (resources: PDFDict | undefined) => {
+      const xobjects = resources?.lookupMaybe(PDFName.of('XObject'), PDFDict);
+      if (!xobjects) return;
+      for (const [, value] of xobjects.entries()) {
+        if (!(value instanceof PDFRef)) continue;
+        const stream = ctx.lookup(value);
+        if (!(stream instanceof PDFRawStream)) continue;
+        const subtype = stream.dict.get(PDFName.of('Subtype'));
+        if (subtype === PDFName.of('Form')) {
+          if (seenForms.has(value)) continue;
+          seenForms.add(value);
+          visit(stream.dict.lookupMaybe(PDFName.of('Resources'), PDFDict));
+          continue;
+        }
+        if (subtype !== PDFName.of('Image')) continue;
+        const w = num(stream.dict, 'Width');
+        const h = num(stream.dict, 'Height');
+        if (!w || !h) continue;
+        // 이미지가 균일 배율로 쪽 안에 들어간다면, 가장 크게 그려질 때의 해상도는
+        // 세워 그린 경우 max(w/pw, h/ph), 눕혀 그린 경우 max(h/pw, w/ph) 이다. 어느 쪽인지 모르므로 낮은 쪽을 쓴다.
+        // 폼 안의 이미지도 결국 이 쪽 위에 그려지므로 같은 하한이 성립한다.
+        const dpi = Math.min(Math.max(w / pw, h / ph), Math.max(h / pw, w / ph));
+        dpiByRef.set(value, Math.min(dpiByRef.get(value) ?? Infinity, dpi));
+      }
+    };
+    visit(page.node.Resources());
   }
 
   const stats: OptimizeStats = { images: dpiByRef.size, resampled: 0, bytesBefore: 0, bytesAfter: 0 };

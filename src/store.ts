@@ -1,8 +1,11 @@
 import { create } from 'zustand';
 import type { PDFPageProxy } from 'pdfjs-dist';
-import { forgetSources } from './engine/client';
+import { devTune } from './devTune';
+import { forgetSources, restoreSource } from './engine/client';
 import { DEFAULT_CAPTURE_TEMPLATE, normalizeCaptures } from './model/captures';
+import { decodeEdits, type PageEdits } from './model/editsCodec';
 import { DEFAULT_TEMPLATE, normalize } from './model/groups';
+import type { SearchPos } from './model/search';
 import { addRot } from './model/geometry';
 import {
   DEFAULT_ZOOM,
@@ -18,7 +21,7 @@ import {
 import { toolDef, type Tab, type Tool } from './model/ui';
 import { clearRenderCaches } from './pdf/caches';
 import { clearPageTexts } from './pdf/pageText';
-import { isPasswordError, openPdf, type LoadedPdf } from './pdf/loader';
+import { isPasswordError, openPdf, readDocFlags, type LoadedPdf } from './pdf/loader';
 
 export interface Source {
   id: string;
@@ -28,6 +31,8 @@ export interface Source {
   loaded: LoadedPdf;
   pageCount: number;
   password?: string;
+  /** 전자서명이 있는 문서. 수정·저장하면 서명이 무효가 되므로 저장 전에 한 번 확인한다. */
+  signed: boolean;
 }
 
 export type { Tab, Tool } from './model/ui';
@@ -63,9 +68,17 @@ interface State {
   focusCaptureId?: string;
   /** 캡처 직후 이름 입력란으로 포커스를 옮길지. */
   captureFocusName: boolean;
+  /** 캡처 목록에 아직 이미지 파일로 내보내지 않은 변경이 있다(목록은 임시 보관이라 닫으면 사라진다). */
+  capturesUnsaved: boolean;
   groups: SplitGroup[];
   template: string;
   focusGroupId?: string;
+  /** 본문 찾기. raw 는 입력한 그대로, query 는 비교용으로 다듬은 값(model/search). counts 는 원본 쪽(pageTextKey) → 일치 수라서 쪽 순서를 바꾸거나 지워도 유효하다. */
+  search: { raw: string; query: string; counts: Record<string, number>; done: number; total: number; running: boolean };
+  /** 지금 가리키는 일치. */
+  searchPos?: SearchPos;
+  /** 값이 바뀌면 보기 탭의 찾기 칸으로 포커스를 옮긴다(Ctrl+F). */
+  searchFocusTick: number;
   helpOpen: boolean;
   busy?: string;
   toast?: { kind: 'info' | 'error'; text: string };
@@ -101,10 +114,14 @@ interface State {
   setCaptureTemplate(tpl: string): void;
   setPreview(id: string, url?: string): void;
   setCaptureFocusName(on: boolean): void;
+  markCapturesSaved(): void;
+  /** 저장본으로 다시 연 직후, 쪽 구성이 같은 이전 문서의 분할 그룹·캡처 목록을 이어받는다(실행 취소 기록 없이). */
+  carryOver(groups: SplitGroup[], captures: Capture[], capturesUnsaved: boolean): void;
   setGroups(groups: SplitGroup[], focusId?: string): void;
   setTemplate(tpl: string): void;
   undo(): void;
   redo(): void;
+  openSearch(): void;
   setHelp(open: boolean): void;
   setBusy(text?: string): void;
   notify(kind: 'info' | 'error', text: string): void;
@@ -112,19 +129,24 @@ interface State {
 }
 
 const HISTORY_LIMIT = 100;
+export const NO_SEARCH: State['search'] = { raw: '', query: '', counts: {}, done: 0, total: 0, running: false };
 
 export const baseName = (s?: Source): string => (s ? s.name.replace(/\.pdf$/i, '') : '문서');
 
 export const useStore = create<State>((set, get) => {
   /** pages/groups/captures 를 바꾸는 모든 편집은 여기를 거쳐 실행 취소 기록을 남긴다. */
   const commit = (next: Partial<Snapshot> & Partial<State>) => {
-    const { pages, groups, captures, past } = get();
+    const { pages, groups, captures, past, dirty, capturesUnsaved } = get();
+    const nextCaptures = renameCaptures(next.captures ?? captures, next.pages ?? pages);
+    // 캡처 목록만 바뀐 편집은 PDF 를 바꾸지 않으므로 "변경됨" 으로 치지 않고 따로 센다.
+    const pdfChanged = !!next.pages || !!next.groups;
     set({
       ...next,
-      captures: renameCaptures(next.captures ?? captures, next.pages ?? pages),
+      captures: nextCaptures,
+      capturesUnsaved: nextCaptures.length > 0 && (capturesUnsaved || !!next.captures || nextCaptures.length !== captures.length),
       past: [...past.slice(-HISTORY_LIMIT + 1), { pages, groups, captures }],
       future: [],
-      dirty: true,
+      dirty: dirty || pdfChanged,
     });
   };
   const primaryBase = () => {
@@ -153,8 +175,11 @@ export const useStore = create<State>((set, get) => {
     captureTemplate: DEFAULT_CAPTURE_TEMPLATE,
     previews: {},
     captureFocusName: false,
+    capturesUnsaved: false,
     groups: [],
     template: DEFAULT_TEMPLATE,
+    search: NO_SEARCH,
+    searchFocusTick: 0,
     helpOpen: false,
     dirty: false,
     past: [],
@@ -166,6 +191,7 @@ export const useStore = create<State>((set, get) => {
       set({ busy: '파일을 여는 중…' });
       try {
         for (const { file, handle } of items) {
+          set({ busy: '파일을 여는 중…' });
           let password: string | undefined;
           let loaded: LoadedPdf;
           for (;;) {
@@ -179,22 +205,50 @@ export const useStore = create<State>((set, get) => {
               password = input;
             }
           }
+          const id = uid();
+          const flags = await readDocFlags(loaded.pdf);
+          // 이 앱이 삽입 항목과 함께 저장한 파일이면, 그려 넣은 부분을 걷어 낸 PDF 로 바꿔 열고 항목을 되살린다.
+          let source = file;
+          const restored = new Map<number, PageEdits>();
+          if (flags.kihoEdits && !devTune().noRestore) {
+            set({ busy: '삽입한 텍스트·펜 선을 다시 편집할 수 있게 여는 중…' });
+            try {
+              const r = await restoreSource({ id, file, password });
+              if (r.bytes) {
+                const clean = new File([r.bytes as Uint8Array<ArrayBuffer>], file.name, { type: 'application/pdf', lastModified: file.lastModified });
+                const reopened = await openPdf(clean);
+                await loaded.destroy().catch(() => {});
+                loaded = reopened;
+                source = clean;
+                password = undefined; // 저장 엔진이 다시 쓴 PDF 에는 암호가 없다
+                for (const p of r.pages) {
+                  const edits = decodeEdits(p.edits);
+                  if (edits) restored.set(p.index, edits);
+                }
+              }
+            } catch (e) {
+              // 되살리지 못해도 파일은 그대로 열린다(삽입 항목은 본문에 고정된 채로 보인다).
+              console.warn('삽입 항목을 되살리지 못했습니다', e);
+              forgetSources([id]);
+            }
+          }
           const src: Source = {
-            id: uid(),
-            file,
+            id,
+            file: source,
             handle,
             name: file.name,
             loaded,
             pageCount: loaded.pdf.numPages,
             password,
+            signed: flags.signed,
           };
           const newPages: PageItem[] = Array.from({ length: src.pageCount }, (_, i) => ({
             uid: uid(),
             srcId: src.id,
             srcIndex: i,
             userRot: 0 as Rot,
-            texts: [],
-            shapes: [],
+            texts: restored.get(i)?.texts ?? [],
+            shapes: restored.get(i)?.shapes ?? [],
           }));
           const s = get();
           const first = s.pages.length === 0;
@@ -222,6 +276,7 @@ export const useStore = create<State>((set, get) => {
       Object.values(previews).forEach((url) => URL.revokeObjectURL(url));
       set({
         captures: [],
+        capturesUnsaved: false,
         previews: {},
         focusCaptureId: undefined,
         sources: {},
@@ -234,6 +289,8 @@ export const useStore = create<State>((set, get) => {
         future: [],
         dirty: false,
         activeTextId: undefined,
+        search: NO_SEARCH,
+        searchPos: undefined,
       });
       await Promise.all(Object.values(sources).map((s) => s.loaded.destroy().catch(() => {})));
     },
@@ -367,6 +424,11 @@ export const useStore = create<State>((set, get) => {
     },
 
     setCaptureFocusName: (captureFocusName) => set({ captureFocusName }),
+    markCapturesSaved: () => set({ capturesUnsaved: false }),
+    carryOver(groups, captures, capturesUnsaved) {
+      const kept = renameCaptures(captures, get().pages);
+      set({ groups: renormalize(groups), captures: kept, capturesUnsaved: capturesUnsaved && kept.length > 0 });
+    },
     setCaptureOptions: (p) => set({ captureOptions: { ...get().captureOptions, ...p } }),
 
     setCaptureTemplate(captureTemplate) {
@@ -401,6 +463,7 @@ export const useStore = create<State>((set, get) => {
         future: [{ pages, groups, captures }, ...future],
         current: Math.min(current, prev.pages.length - 1),
         activeTextId: undefined,
+        capturesUnsaved: prev.captures.length > 0 && (get().capturesUnsaved || prev.captures !== captures),
         dirty: true,
       });
     },
@@ -415,17 +478,38 @@ export const useStore = create<State>((set, get) => {
         future: future.slice(1),
         current: Math.min(current, next.pages.length - 1),
         activeTextId: undefined,
+        capturesUnsaved: next.captures.length > 0 && (get().capturesUnsaved || next.captures !== captures),
         dirty: true,
       });
     },
 
     setPaneSize: (w, h) => set({ paneSize: { w, h } }),
+    openSearch() {
+      if (!get().pages.length) return;
+      get().setTab('view');
+      set({ searchFocusTick: get().searchFocusTick + 1 });
+    },
     setHelp: (helpOpen) => set({ helpOpen }),
     setBusy: (busy) => set({ busy }),
     notify: (kind, text) => set({ toast: { kind, text } }),
     markSaved: () => set({ dirty: false }),
   };
 });
+
+/** 지금 문서를 닫으면 잃는 것이 있으면 그 설명을 돌려준다. */
+export function unsavedWarning(): string | undefined {
+  const s = useStore.getState();
+  const parts: string[] = [];
+  if (s.dirty) parts.push('저장하지 않은 변경 사항');
+  if (s.capturesUnsaved && s.captures.length) parts.push(`아직 이미지 파일로 저장하지 않은 캡처 ${s.captures.length}장`);
+  return parts.length ? `${parts.join('과(와) ')}이(가) 있습니다.` : undefined;
+}
+
+/** 문서를 닫거나 바꾸기 전에 확인한다. 잃을 것이 없으면 묻지 않는다. */
+export function confirmDiscard(question: string): boolean {
+  const warning = unsavedWarning();
+  return !warning || window.confirm(`${warning} ${question}`);
+}
 
 export async function getPdfPage(item: PageItem): Promise<PDFPageProxy> {
   const src = useStore.getState().sources[item.srcId];

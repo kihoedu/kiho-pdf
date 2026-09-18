@@ -230,6 +230,13 @@ kbd {
   background: rgb(0 100 255 / 28%);
   color: transparent;
 }
+/* 본문 찾기: 일치한 곳과 지금 가리키는 곳 */
+::highlight(kiho-find) {
+  background-color: rgb(255 214 0 / 45%);
+}
+::highlight(kiho-find-active) {
+  background-color: rgb(255 110 0 / 60%);
+}
 .textLayer .endOfContent {
   display: block;
   position: absolute;
@@ -574,6 +581,14 @@ kbd {
 }
 .row > button {
   flex: 1;
+}
+.find-input {
+  flex: 1;
+  min-width: 0;
+}
+.row .find-input ~ button {
+  flex: none;
+  width: 44px;
 }
 .muted {
   margin: 0;

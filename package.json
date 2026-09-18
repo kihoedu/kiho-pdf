@@ -1,8 +1,12 @@
 {
   "name": "kiho-pdf",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12"
+  },
   "scripts": {
     "postinstall": "node scripts/copy-assets.mjs",
     "dev": "vite",
@@ -13,6 +17,7 @@
     "e2e": "playwright test",
     "bench:sample": "node bench/make-sample.mjs",
     "bench:split": "node bench/bench-split.mjs",
+    "bench:open": "node bench/open-bench.mjs",
     "bench:thumb": "node bench/thumb-bench.mjs"
   },
   "dependencies": {

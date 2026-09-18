@@ -1,7 +1,8 @@
 import { zipSync } from 'fflate';
 import { buildOutputs, type OutputHandler } from '../engine/client';
 import type { OptimizeOptions, OptimizeStats, OutputPlan, PagePlan, ShapeDraw, TextDraw } from '../engine/protocol';
-import { viewToPdf } from '../model/geometry';
+import { encodeEdits } from '../model/editsCodec';
+import { addRot, viewToPdf } from '../model/geometry';
 import { finalFileNames, validate, withPdfExt } from '../model/groups';
 import { hexToRgb01, planShape } from '../model/plan';
 import { ensureTextFont, layoutText, TEXT_PAD } from '../model/textLayout';
@@ -71,7 +72,7 @@ async function planPages(pages: PageItem[]): Promise<PagePlan[]> {
           });
         }
       }
-      return { srcId: p.srcId, srcIndex: p.srcIndex, addRotate: p.userRot, texts, shapes };
+      return { srcId: p.srcId, srcIndex: p.srcIndex, addRotate: p.userRot, texts, shapes, edits: encodeEdits(p) };
     }),
   );
 }
@@ -127,7 +128,30 @@ export function download(name: string, bytes: Uint8Array, type: string): void {
 }
 
 export const isAbort = (e: unknown) => (e as DOMException)?.name === 'AbortError';
-export const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+// 확인 창에 오래 머물면 브라우저가 "사용자 동작" 권한을 거둬 저장 대화상자를 막는다. 한 번 더 누르면 된다.
+export const errText = (e: unknown) =>
+  (e as DOMException)?.name === 'SecurityError'
+    ? '저장 대화상자를 열 수 없었습니다. 저장을 한 번 더 눌러 주세요.'
+    : e instanceof Error
+      ? e.message
+      : String(e);
+
+const signatureAck = new Set<string>();
+
+/** 전자서명이 있는 원본의 쪽을 저장하기 전에 확인한다(문서마다 한 번만 묻는다). */
+export function confirmSigned(pages: PageItem[]): boolean {
+  const { sources } = useStore.getState();
+  const signed = [...new Set(pages.map((p) => p.srcId))]
+    .map((id) => sources[id])
+    .filter((s) => s?.signed && !signatureAck.has(s.id));
+  if (!signed.length) return true;
+  const ok = window.confirm(
+    `전자서명이 있는 문서입니다: ${signed.map((s) => s.name).join(', ')}\n\n` +
+      '이 앱으로 저장한 파일에서는 전자서명이 무효가 됩니다. 서명된 원본이 필요하면 원본 파일에 덮어쓰지 마세요.\n\n계속할까요?',
+  );
+  if (ok) signed.forEach((s) => signatureAck.add(s.id));
+  return ok;
+}
 
 /** 지정한 페이지들을 하나의 PDF 로 저장한다. pages 생략 시 문서 전체. */
 export async function savePdf(pages?: PageItem[], suggested?: string, optimize?: OptimizeOptions): Promise<void> {
@@ -135,6 +159,7 @@ export async function savePdf(pages?: PageItem[], suggested?: string, optimize?:
   const whole = !pages;
   const list = pages ?? st.pages;
   if (!list.length) return;
+  if (!confirmSigned(list)) return;
   const primary = st.primaryId ? st.sources[st.primaryId] : undefined;
   const name = withPdfExt(suggested ?? `${baseName(primary)}_${optimize ? '최적화' : '편집'}`);
   try {
@@ -153,7 +178,7 @@ export async function savePdf(pages?: PageItem[], suggested?: string, optimize?:
     if (handle) {
       for (const s of Object.values(st.sources)) {
         if (s.handle && (await s.handle.isSameEntry(handle))) {
-          await st.openFiles([{ file: await handle.getFile(), handle }], 'replace');
+          await reopenSaved(handle, whole ? list : undefined);
           break;
         }
       }
@@ -163,6 +188,30 @@ export async function savePdf(pages?: PageItem[], suggested?: string, optimize?:
   } finally {
     st.setBusy(undefined);
   }
+}
+
+/**
+ * 방금 저장한 파일로 문서를 다시 연다. 문서 전체를 저장한 경우에는 쪽 구성이 그대로이므로
+ * 분할 그룹과 캡처 목록을 새 문서로 이어받는다(삽입 항목은 저장본의 기록에서 되살아난다).
+ */
+async function reopenSaved(handle: FileSystemFileHandle, savedPages?: PageItem[]): Promise<void> {
+  const before = useStore.getState();
+  const { groups, captures, capturesUnsaved } = before;
+  await before.openFiles([{ file: await handle.getFile(), handle }], 'replace');
+  const after = useStore.getState();
+  if (!savedPages || after.pages.length !== savedPages.length) return;
+  after.setCurrent(before.current); // 보고 있던 쪽으로 돌아간다
+  if (!groups.length && !captures.length) return;
+  const at = new Map(savedPages.map((p, i) => [p.uid, i]));
+  const moved = captures.flatMap((c) => {
+    const i = at.get(c.pageUid);
+    if (i === undefined) return [];
+    // 사용자 회전은 저장본의 /Rotate 에 녹아 0 이 됐다. "캡처 뒤에 돌린 만큼" 만 남도록 기준을 옮긴다.
+    return [{ ...c, pageUid: after.pages[i].uid, userRot: addRot(c.userRot, -savedPages[i].userRot) }];
+  });
+  after.carryOver(groups, moved, capturesUnsaved);
+  const { refreshPreview } = await import('./capture'); // capture.ts 가 이 파일을 쓰므로 순환 참조를 피한다
+  for (const c of moved) void refreshPreview(c.id);
 }
 
 /** 분할 그룹을 한 번에 저장한다. 폴더를 한 번만 고르면 나머지는 대화상자 없이 기록된다. */
@@ -175,6 +224,7 @@ export async function saveGroups(): Promise<void> {
     st.notify('error', `저장할 수 없습니다: ${issues[0].message}`);
     return;
   }
+  if (!confirmSigned(pages)) return;
   const names = finalFileNames(groups);
   const outputs = groups.map((g, i) => ({ name: names[i], pages: pages.slice(g.start - 1, g.end) }));
   try {

@@ -2,12 +2,16 @@ import { expect, test } from '@playwright/test';
 import { PDFDict, PDFDocument, PDFName, PDFNumber, PDFRawStream, PDFRef } from '@cantoo/pdf-lib';
 import { mockPickers, readPdf } from './helpers';
 
-/** 쪽별 이미지 XObject 의 크기·비트 수·바이트를 뽑는다. */
+/** 쪽별 이미지 XObject 의 크기·비트 수·바이트를 뽑는다(폼 XObject 안에 든 이미지는 폼을 따라 들어간다). */
 function imagesOf(doc: PDFDocument) {
   return doc.getPages().map((page) => {
     const xo = page.node.Resources()!.lookup(PDFName.of('XObject'), PDFDict);
     const [, ref] = xo.entries()[0];
-    const s = doc.context.lookup(ref as PDFRef) as PDFRawStream;
+    let s = doc.context.lookup(ref as PDFRef) as PDFRawStream;
+    if (s.dict.get(PDFName.of('Subtype')) === PDFName.of('Form')) {
+      const inner = s.dict.lookup(PDFName.of('Resources'), PDFDict).lookup(PDFName.of('XObject'), PDFDict);
+      s = doc.context.lookup(inner.entries()[0][1] as PDFRef) as PDFRawStream;
+    }
     const n = (k: string) => (s.dict.lookup(PDFName.of(k)) as PDFNumber).asNumber();
     return { w: n('Width'), h: n('Height'), bpc: n('BitsPerComponent'), bytes: s.contents };
   });
@@ -37,6 +41,7 @@ test('용량 최적화: 기준 해상도를 넘는 이미지만 줄이고 나머
     );
   const hi = Buffer.from(await jpeg(2480, 3508), 'base64'); // A6 크기 쪽에 놓으면 600dpi
   const lo = Buffer.from(await jpeg(1000, 1414), 'base64'); // 같은 쪽에서 약 242dpi
+  const inForm = Buffer.from(await jpeg(1860, 2631), 'base64'); // 폼 XObject 안에 넣을 450dpi 이미지
 
   const doc = await PDFDocument.create();
   const size: [number, number] = [297.64, 420.94]; // A6
@@ -53,6 +58,19 @@ test('용량 최적화: 기준 해상도를 넘는 이미지만 줄이고 나머
   const p3 = doc.addPage(size);
   p3.node.setXObject(PDFName.of('Bw'), bwRef);
   p3.node.addContentStream(doc.context.register(doc.context.stream(`q ${size[0]} 0 0 ${size[1]} 0 0 cm /Bw Do Q`)));
+  // 4쪽: 이미지를 폼 XObject 로 한 겹 감싼 쪽(조판 프로그램·복합기 출력물에 흔하다). 폼 안까지 따라 들어가야 한다.
+  const formImg = await doc.embedJpg(inForm);
+  const formRef = doc.context.register(
+    doc.context.stream(`q ${size[0]} 0 0 ${size[1]} 0 0 cm /Im Do Q`, {
+      Type: 'XObject',
+      Subtype: 'Form',
+      BBox: [0, 0, size[0], size[1]],
+      Resources: { XObject: { Im: formImg.ref } },
+    }),
+  );
+  const p4 = doc.addPage(size);
+  p4.node.setXObject(PDFName.of('Fm'), formRef);
+  p4.node.addContentStream(doc.context.register(doc.context.stream('/Fm Do')));
   const original = await doc.save();
   const before = imagesOf(await PDFDocument.load(original));
 
@@ -67,9 +85,9 @@ test('용량 최적화: 기준 해상도를 넘는 이미지만 줄이고 나머
   }, Buffer.from(original).toString('base64'));
 
   await page.getByRole('button', { name: '열기…' }).click();
-  await expect(page.locator('.thumb')).toHaveCount(3);
+  await expect(page.locator('.thumb')).toHaveCount(4);
   await page.getByRole('button', { name: /최적화하여/ }).click();
-  await expect(page.locator('.toast')).toContainText('이미지 3개 중 1개를 300dpi 로 조정', { timeout: 30_000 });
+  await expect(page.locator('.toast')).toContainText('이미지 4개 중 2개를 300dpi 로 조정', { timeout: 30_000 });
 
   const saved = await readPdf(page, 'hires_최적화.pdf');
   const after = imagesOf(saved);
@@ -83,6 +101,11 @@ test('용량 최적화: 기준 해상도를 넘는 이미지만 줄이고 나머
   // 3쪽: 1비트 흑백 → 그대로
   expect(after[2]).toMatchObject({ w: 2480, h: 3508, bpc: 1 });
   expect(Buffer.from(after[2].bytes).equals(Buffer.from(before[2].bytes))).toBe(true);
+
+  // 4쪽: 폼 XObject 안의 450dpi → 300dpi
+  expect(after[3].w).toBe(1240);
+  expect(after[3].h).toBe(1754);
+  expect(after[3].bytes.length).toBeLessThan(before[3].bytes.length * 0.8);
 
   // 기본 저장은 여전히 무손실이어야 한다: 같은 문서를 그냥 저장하면 모든 이미지가 그대로다
   await page.keyboard.press('Control+s');

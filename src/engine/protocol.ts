@@ -24,6 +24,8 @@ export interface PagePlan {
   addRotate: number;
   texts: TextDraw[];
   shapes: ShapeDraw[];
+  /** 이 쪽의 삽입 항목 기록(model/editsCodec). 저장본에 함께 적어 두어 다시 열었을 때 재편집할 수 있게 한다. */
+  edits?: string;
 }
 
 export interface OutputPlan {
@@ -56,10 +58,25 @@ export interface BuildRequest {
   optimize?: OptimizeOptions;
 }
 
-export type EngineRequest = BuildRequest | { type: 'forget'; srcIds?: string[] };
+/** 이 앱이 삽입 항목과 함께 저장한 파일에서, 그려 넣은 부분을 걷어 내고 기록을 돌려 달라는 요청. */
+export interface RestoreRequest {
+  type: 'restore';
+  jobId: number;
+  source: BuildRequest['sources'][number];
+}
+
+export interface RestoredPage {
+  /** 0-based 쪽 번호 */
+  index: number;
+  edits: string;
+}
+
+export type EngineRequest = BuildRequest | RestoreRequest | { type: 'forget'; srcIds?: string[] };
 
 export type EngineResponse =
   | { type: 'output'; jobId: number; index: number; name: string; bytes: Uint8Array; stats?: OptimizeStats }
+  /** pages 가 비어 있으면 되살릴 것이 없다는 뜻이고 bytes 도 없다. bytes 는 그려 넣은 부분을 걷어 낸 PDF. */
+  | { type: 'restored'; jobId: number; pages: RestoredPage[]; bytes?: Uint8Array }
   | { type: 'progress'; jobId: number; text: string }
   | { type: 'done'; jobId: number }
   | { type: 'error'; jobId: number; message: string };

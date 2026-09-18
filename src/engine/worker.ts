@@ -18,7 +18,8 @@ import {
 } from '@cantoo/pdf-lib';
 import fontkit from '@cantoo/fontkit';
 import { optimizeImages } from './optimize';
-import type { BuildRequest, EngineRequest, EngineResponse } from './protocol';
+import { markDocument, recordEdits, restoreEdits, snapshotPage } from './pieceInfo';
+import type { BuildRequest, EngineRequest, EngineResponse, RestoreRequest } from './protocol';
 
 // 원본은 한 번만 파싱해 두고 분할·저장에 재사용한다.
 const parsed = new Map<string, Promise<PDFDocument>>();
@@ -44,6 +45,7 @@ async function build(req: BuildRequest): Promise<void> {
     const plan = req.outputs[oi];
     const out = await PDFDocument.create();
     let font: PDFFont | undefined;
+    let recorded = false;
 
     // 같은 원본에서 연속으로 가져오는 페이지는 한 번의 copyPages 로 묶는다(공유 리소스 중복 방지).
     let i = 0;
@@ -62,6 +64,8 @@ async function build(req: BuildRequest): Promise<void> {
         if (pagePlan.addRotate) {
           page.setRotation(degrees((page.getRotation().angle + pagePlan.addRotate) % 360));
         }
+        // 다시 열었을 때 재편집할 수 있도록, 그리기 전 상태를 찍어 두었다가 덧붙인 부분을 기록한다(pieceInfo.ts).
+        const before = pagePlan.edits ? snapshotPage(page) : undefined;
         // 펜 선 → 텍스트 순으로, 모두 기존 콘텐츠 뒤의 새 스트림에 그린다.
         for (const s of pagePlan.shapes) {
           const ops = [
@@ -96,9 +100,14 @@ async function build(req: BuildRequest): Promise<void> {
             }
           }
         }
+        if (before && pagePlan.edits) {
+          recordEdits(out, page, pagePlan.edits, before);
+          recorded = true;
+        }
       }
       i = j;
     }
+    if (recorded) markDocument(out);
 
     const stats = req.optimize
       ? await optimizeImages(out, req.optimize, (done, total) =>
@@ -113,6 +122,23 @@ async function build(req: BuildRequest): Promise<void> {
   post({ type: 'done', jobId: req.jobId });
 }
 
+/**
+ * 이 앱이 저장한 파일을 다시 열 때: 그려 넣은 삽입 항목을 걷어 낸 PDF 와 그 기록을 돌려준다.
+ * 고친 문서는 그대로 파싱 캐시에 남으므로 이후 저장에서 다시 파싱하지 않는다.
+ */
+async function restore(req: RestoreRequest): Promise<void> {
+  try {
+    const doc = await loadSource(req.source);
+    const pages = restoreEdits(doc);
+    if (!pages.length) return post({ type: 'restored', jobId: req.jobId, pages });
+    const bytes = await doc.save({ useObjectStreams: true, updateFieldAppearances: false });
+    post({ type: 'restored', jobId: req.jobId, pages, bytes }, [bytes.buffer]);
+  } catch (err) {
+    parsed.delete(req.source.id); // 반쯤 고친 문서를 저장에 쓰지 않도록
+    throw err;
+  }
+}
+
 self.onmessage = (e: MessageEvent<EngineRequest>) => {
   const req = e.data;
   if (req.type === 'forget') {
@@ -120,7 +146,7 @@ self.onmessage = (e: MessageEvent<EngineRequest>) => {
     else parsed.clear();
     return;
   }
-  build(req).catch((err) =>
+  (req.type === 'restore' ? restore(req) : build(req)).catch((err) =>
     post({ type: 'error', jobId: req.jobId, message: err instanceof Error ? err.message : String(err) }),
   );
 };

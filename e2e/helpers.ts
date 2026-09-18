@@ -32,6 +32,22 @@ export async function seedFile(page: Page, name = 'test_12p.pdf'): Promise<void>
   }, name);
 }
 
+/** Node 에서 만든 PDF 바이트를 OPFS 에 넣고, 다음 "열기" 가 그 파일을 고르게 한다. */
+export async function seedBytes(page: Page, name: string, bytes: Uint8Array): Promise<void> {
+  await page.evaluate(
+    async ([n, b64]) => {
+      const bin = atob(b64);
+      const data = Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
+      const root = await navigator.storage.getDirectory();
+      const w = await (await root.getFileHandle(n, { create: true })).createWritable();
+      await w.write(data);
+      await w.close();
+      (window as unknown as { __pickName: string }).__pickName = n;
+    },
+    [name, Buffer.from(bytes).toString('base64')] as const,
+  );
+}
+
 export async function openSample(page: Page): Promise<void> {
   await mockPickers(page);
   await page.goto('/');

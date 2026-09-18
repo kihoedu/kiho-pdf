@@ -1,4 +1,4 @@
-// 개발용 스크린샷: node bench/shot.mjs [split|text|capture|pen|help|file] → bench/out/shot-*.png (개발 서버가 떠 있어야 한다)
+// 개발용 스크린샷: node bench/shot.mjs [split|text|capture|pen|find|help|file] → bench/out/shot-*.png (개발 서버가 떠 있어야 한다)
 import { chromium } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 
@@ -50,6 +50,11 @@ const scenarios = {
     await page.mouse.up();
     await page.keyboard.press('v');
     await page.mouse.click(s.x + 120, s.y + 380); // 선 선택
+  },
+  async find() {
+    await page.keyboard.press('Control+f');
+    await page.keyboard.type('target box');
+    await page.keyboard.press('Enter');
   },
   async help() {
     await page.getByRole('button', { name: '편집' }).click();

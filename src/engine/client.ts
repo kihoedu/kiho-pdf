@@ -1,4 +1,4 @@
-import type { BuildRequest, EngineRequest, EngineResponse, OptimizeStats } from './protocol';
+import type { BuildRequest, EngineRequest, EngineResponse, OptimizeStats, RestoredPage } from './protocol';
 
 export type OutputHandler = (index: number, name: string, bytes: Uint8Array, stats?: OptimizeStats) => void | Promise<void>;
 
@@ -9,6 +9,7 @@ const jobs = new Map<
   {
     onOutput: OutputHandler;
     onProgress?: (text: string) => void;
+    onRestored?: (pages: RestoredPage[], bytes?: Uint8Array) => void;
     pending: Promise<void>[];
     resolve: () => void;
     reject: (e: Error) => void;
@@ -26,6 +27,10 @@ function getWorker(): Worker {
       job.pending.push(Promise.resolve(job.onOutput(msg.index, msg.name, msg.bytes, msg.stats)));
     } else if (msg.type === 'progress') {
       job.onProgress?.(msg.text);
+    } else if (msg.type === 'restored') {
+      jobs.delete(msg.jobId);
+      job.onRestored?.(msg.pages, msg.bytes);
+      job.resolve();
     } else {
       jobs.delete(msg.jobId);
       if (msg.type === 'error') job.reject(new Error(msg.message));
@@ -54,6 +59,22 @@ export function buildOutputs(
     jobs.set(jobId, { onOutput, onProgress, pending: [], resolve, reject });
     const req: EngineRequest = { type: 'build', jobId, ...plan };
     getWorker().postMessage(req);
+  });
+}
+
+/** 삽입 항목 기록이 있는 파일에서 그려 넣은 부분을 걷어 낸 PDF(bytes)와 쪽별 기록을 받는다. 되살릴 것이 없으면 bytes 가 없다. */
+export function restoreSource(source: BuildRequest['sources'][number]): Promise<{ pages: RestoredPage[]; bytes?: Uint8Array }> {
+  const jobId = nextJob++;
+  return new Promise((resolve, reject) => {
+    let result: { pages: RestoredPage[]; bytes?: Uint8Array } = { pages: [] };
+    jobs.set(jobId, {
+      onOutput: () => {},
+      onRestored: (pages, bytes) => (result = { pages, bytes }),
+      pending: [],
+      resolve: () => resolve(result),
+      reject,
+    });
+    getWorker().postMessage({ type: 'restore', jobId, source } satisfies EngineRequest);
   });
 }
 

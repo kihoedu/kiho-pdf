@@ -7,7 +7,7 @@ import { SidePanel } from './components/SidePanel';
 import { Thumbnails } from './components/Thumbnails';
 import { TOP_PANE_BASE_HEIGHT } from './model/types';
 import { TOOL_KEYS } from './model/ui';
-import { useStore } from './store';
+import { confirmDiscard, unsavedWarning, useStore } from './store';
 
 const SPLITTER = 7;
 const MIN_TOP = 120;
@@ -67,7 +67,7 @@ export default function App() {
         const files = await filesFromDrop(e.dataTransfer);
         if (!files.length) return st.notify('error', 'PDF 파일만 열 수 있습니다.');
         const append = st.pages.length > 0 && e.shiftKey;
-        if (!append && st.dirty && !window.confirm('저장하지 않은 변경 사항이 있습니다. 새 파일을 열까요?')) return;
+        if (!append && !confirmDiscard('새 파일을 열까요?')) return;
         await st.openFiles(files, append ? 'append' : 'replace');
       }}
     >
@@ -136,7 +136,7 @@ function useShortcuts() {
 
       if (mod && key === 'o') {
         e.preventDefault();
-        if (st.dirty && !window.confirm('저장하지 않은 변경 사항이 있습니다. 계속할까요?')) return;
+        if (!confirmDiscard('계속할까요?')) return;
         pickPdfFiles(true).then((f) => {
           if (f.length) st.openFiles(f, 'replace');
         });
@@ -146,6 +146,9 @@ function useShortcuts() {
       } else if (mod && key === 'p') {
         e.preventDefault();
         printPdf();
+      } else if (mod && key === 'f') {
+        e.preventDefault(); // 브라우저의 찾기는 화면의 한 쪽만 보므로 문서 전체를 찾는 쪽으로 바꾼다
+        st.openSearch();
       } else if (typing) {
         return; // 입력 중에는 아래 단축키를 쓰지 않는다(브라우저 기본 Ctrl+Z 등 유지)
       } else if (mod && key === 'z') {
@@ -184,7 +187,7 @@ function useShortcuts() {
     };
     window.addEventListener('keydown', onKey);
     const onUnload = (e: BeforeUnloadEvent) => {
-      if (useStore.getState().dirty) e.preventDefault();
+      if (unsavedWarning()) e.preventDefault();
     };
     window.addEventListener('beforeunload', onUnload);
     return () => {

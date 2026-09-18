@@ -97,8 +97,12 @@ test('텍스트 삽입: 회전된 쪽에 드래그로 입력 → 저장 → 저�
   await page.keyboard.press('Control+s');
   await expect(page.locator('.toast')).toContainText('저장 완료');
 
-  // 저장본을 다시 연다
-  await page.evaluate(() => ((window as unknown as { __pickName: string }).__pickName = 'test_12p_편집.pdf'));
+  // 저장본을 "있는 그대로" 다시 연다(삽입 항목을 되살리지 않고, 본문에 실제로 그려진 결과를 본다)
+  await page.evaluate(() => {
+    const w = window as unknown as { __pickName: string; __kihoTune: { noRestore: boolean } };
+    w.__pickName = 'test_12p_편집.pdf';
+    w.__kihoTune = { noRestore: true };
+  });
   await page.getByRole('button', { name: '파일', exact: true }).click();
   await page.getByRole('button', { name: '열기…' }).click();
   await expect(page.locator('table.info')).toContainText('test_12p_편집.pdf');

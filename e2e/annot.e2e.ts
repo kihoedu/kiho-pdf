@@ -29,7 +29,7 @@ test('편집 메뉴에는 선택·텍스트·펜만 있다', async ({ page }) =>
   // 없어진 도구의 단축키는 아무 일도 하지 않는다
   for (const k of ['h', 'r', 'l']) await page.keyboard.press(k);
   await expect(page.locator('.tool-grid button.on')).toHaveText('↖ 선택');
-  // 검색 탭도 없다
+  // 검색 탭도 없다(본문 찾기는 보기 탭 안에 있다)
   await expect(page.locator('.tabs button')).toHaveText(['파일', '보기', '분할', '캡처', '페이지', '편집']);
 });
 
@@ -53,7 +53,12 @@ test('펜: 그린 선이 저장본에 그대로 그려지고, 이동·삭제·�
 
   await page.keyboard.press('Control+s');
   await expect(page.locator('.toast')).toContainText('저장 완료');
-  await page.evaluate(() => ((window as unknown as { __pickName: string }).__pickName = 'test_12p_편집.pdf'));
+  // 저장본을 있는 그대로 연다(되살리지 않음): 선이 오버레이가 아니라 본문에 그려져 있어야 한다
+  await page.evaluate(() => {
+    const w = window as unknown as { __pickName: string; __kihoTune: { noRestore: boolean } };
+    w.__pickName = 'test_12p_편집.pdf';
+    w.__kihoTune = { noRestore: true };
+  });
   await page.getByRole('button', { name: '파일', exact: true }).click();
   await page.getByRole('button', { name: '열기…' }).click();
   await expect(page.locator('table.info')).toContainText('test_12p_편집.pdf');

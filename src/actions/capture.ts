@@ -160,6 +160,8 @@ export async function saveCaptures(): Promise<void> {
       // 이미지는 이미 압축돼 있으므로 무압축으로 묶는다.
       download(`${baseName(primary)}_캡처.zip`, zipSync(zipEntries, { level: 0 }), 'application/zip');
     }
+    // 저장하는 사이에 목록이 바뀌지 않았을 때만 "저장됨" 으로 친다.
+    if (useStore.getState().captures === captures) useStore.getState().markCapturesSaved();
     st.notify('info', `이미지 ${captures.length}개 저장 완료 (${opt.dpi}dpi ${ext.toUpperCase()}, 합계 ${fmtSize(total)}, ${fmtSec(t0)})`);
   } catch (e) {
     if (!isAbort(e)) st.notify('error', `캡처 저장 실패: ${errText(e)}`);

@@ -10,4 +10,6 @@ cpSync(
   'node_modules/pretendard/dist/public/static/alternative/Pretendard-Regular.ttf',
   'public/fonts/Pretendard-Regular.ttf',
 );
+// OFL 은 폰트와 함께 라이선스 전문을 배포하도록 요구한다.
+cpSync('node_modules/pretendard/dist/LICENSE.txt', 'public/fonts/Pretendard-LICENSE.txt');
 console.log('assets copied → public/pdfjs, public/fonts');
