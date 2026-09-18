@@ -2,16 +2,25 @@ import { defineConfig } from '@playwright/test';
 
 // 설치된 Edge 를 그대로 쓴다(브라우저 다운로드 없음). Chrome 을 쓰려면 PW_CHANNEL=chrome.
 const channel = process.env.PW_CHANNEL ?? 'msedge';
+// 브라우저는 global-setup 이 서버로 한 번만 띄운다(이유는 e2e/global-setup.ts). 워커는 그 주소를 환경 변수로 받는다.
+const wsEndpoint = process.env.PW_E2E_WS;
 
 export default defineConfig({
   testDir: 'e2e',
   globalSetup: './e2e/global-setup.ts',
   timeout: 60_000,
+  // 워커 여러 개가 브라우저 하나를 나눠 쓰므로, 부하가 몰리면 열기·저장이 기본 5초를 넘기도 한다.
+  expect: { timeout: 15_000 },
   fullyParallel: true,
   // CI 러너는 코어가 적어 시간에 민감한 테스트가 가끔 흔들린다. 한 번 더 돌려 보고 그래도 실패하면 실패다.
   retries: process.env.CI ? 1 : 0,
   reporter: [['list']],
-  use: { channel, viewport: { width: 1440, height: 900 }, trace: 'retain-on-failure' },
+  use: {
+    channel,
+    connectOptions: wsEndpoint ? { wsEndpoint } : undefined,
+    viewport: { width: 1440, height: 900 },
+    trace: 'retain-on-failure',
+  },
   projects: [
     // 개발 서버 대상: 기능 테스트
     { name: 'app', testMatch: '**/*.e2e.ts', use: { baseURL: 'http://localhost:5173' } },

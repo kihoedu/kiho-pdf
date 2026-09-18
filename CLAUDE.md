@@ -37,6 +37,8 @@ npm run typecheck && npm test && npm run e2e
 ```
 
 - E2E 는 설치된 Edge 를 쓴다(브라우저 다운로드 없음). 파일 선택 대화상자는 `e2e/helpers.ts` 의 OPFS 대역으로 대체한다.
+- 브라우저는 `e2e/global-setup.ts` 가 별도 프로세스(`e2e/browser-server.mjs`)로 한 번만 띄우고 워커들은 거기에 접속한다.
+  워커가 브라우저를 직접 띄우면 Windows 에서 임시 프로필 정리가 끝나지 않아 실행이 멈춘다(설명은 global-setup.ts). 이 구조를 되돌리지 않는다.
 - 이 앱이 저장한 파일은 다시 열면 삽입 항목이 오버레이로 되살아난다. 저장본의 본문에 실제로 그려진 결과를 검증하려면
   열기 전에 `window.__kihoTune = { noRestore: true }` 를 넣는다(`src/devTune.ts`, 개발 서버 전용).
 - 화면 확인: `node bench/shot.mjs <split|text|capture|pen|find|file|help>` → `bench/out/shot-*.png` (개발 서버가 떠 있어야 한다).
