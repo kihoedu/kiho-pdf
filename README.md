@@ -19,6 +19,7 @@ npm run e2e        # E2E (Playwright, 설치된 Edge 사용 — 브라우저 다
 - Chrome/Edge 권장: File System Access API 로 폴더를 한 번만 고르면 분할 파일을 대화상자 없이 기록한다.
   미지원 브라우저에서는 무압축 ZIP 으로 내려받는다. 이 API 와 서비스 워커는 `https` 또는 `localhost` 에서만 동작한다.
 - 배포는 [docs/DEPLOY.md](docs/DEPLOY.md)(GitHub Pages 권장, Firebase Hosting·FTP 절차 포함), 변경 이력은 [CHANGELOG.md](CHANGELOG.md).
+- 이어서 작업하는 사람은 [docs/HANDOFF.md](docs/HANDOFF.md)(현재 상태 · 열려 있는 일 · 함정 · 작업 기록)부터 읽는다.
 
 ### 설치형 앱(PWA)
 
@@ -141,7 +142,7 @@ src/
   sw.template.js  서비스 워커 원본(빌드 때 사전 캐시 목록이 채워져 dist/sw.js 가 된다)
 e2e/          Playwright 테스트(*.e2e.ts = 개발 서버, *.pwa.ts = 빌드본·오프라인)
 bench/        샘플 생성·벤치마크·스크린샷 스크립트
-docs/         배포 계획(DEPLOY.md)
+docs/         배포 계획(DEPLOY.md), 인수인계·작업 기록(HANDOFF.md)
 .github/      CI(타입 검사·단위·E2E)와 GitHub Pages 배포 워크플로
 ```
 
