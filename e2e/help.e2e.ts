@@ -25,10 +25,7 @@ test('도움말: 메뉴 버튼과 F1 로 열리고, 단축키 표를 포함하�
   await expect(dialog.locator('#help-capture kbd', { hasText: /^C$/ })).toHaveCount(1);
   await expect(dialog.locator('#help-capture')).toContainText('모두 저장');
   // 없어진 기능은 도움말에도 없어야 한다
-  for (const gone of ['형광펜', '사각형', '검색 탭']) await expect(dialog).not.toContainText(gone);
-  // 본문 찾기는 별도 탭이 아니라 보기 탭 안에 있다
-  await expect(dialog.locator('#help-view')).toContainText('본문 찾기');
-  await expect(dialog.locator('#help-shortcuts')).toContainText('Ctrl+F');
+  for (const gone of ['형광펜', '사각형', '검색 탭', '본문 찾기', 'Ctrl+F']) await expect(dialog).not.toContainText(gone);
   for (const keys of ['Ctrl+O', 'Ctrl+S', 'Ctrl+P', 'Ctrl+Z', 'F1', 'PgDn', 'Delete']) {
     await expect(dialog.locator('#help-shortcuts')).toContainText(keys);
   }

@@ -146,9 +146,6 @@ function useShortcuts() {
       } else if (mod && key === 'p') {
         e.preventDefault();
         printPdf();
-      } else if (mod && key === 'f') {
-        e.preventDefault(); // 브라우저의 찾기는 화면의 한 쪽만 보므로 문서 전체를 찾는 쪽으로 바꾼다
-        st.openSearch();
       } else if (typing) {
         return; // 입력 중에는 아래 단축키를 쓰지 않는다(브라우저 기본 Ctrl+Z 등 유지)
       } else if (mod && key === 'z') {

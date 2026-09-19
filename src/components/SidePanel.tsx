@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { pickPdfFiles, printPdf, saveGroups, savePdf } from '../actions/io';
-import { clearSearch, runSearch, searchSummary, stepSearch } from '../actions/search';
 import { endGroupHere } from '../actions/split';
 import { addRot, viewSize } from '../model/geometry';
 import { everyN, fromBookmarks, GROUP_COLORS, parseRangeList, unassignedPages, validate } from '../model/groups';
-import { compactText } from '../model/search';
 import { CSS_UNITS, type SplitGroup } from '../model/types';
 import { pageBox, pageRot } from '../pdf/loader';
 import { loadOutline, type OutlineEntry } from '../pdf/outline';
@@ -190,7 +188,6 @@ function ViewTab() {
 
   return (
     <>
-      <FindSection />
       <section>
         <h3>페이지 이동</h3>
         <div className="row">
@@ -244,74 +241,6 @@ function ViewTab() {
         )}
       </section>
     </>
-  );
-}
-
-/** 본문 찾기. 문서 전체에서 찾아 일치한 곳을 차례로 오간다(Ctrl+F 로 이 칸에 온다). */
-function FindSection() {
-  const search = useStore((s) => s.search);
-  const focusTick = useStore((s) => s.searchFocusTick);
-  // 아래 두 값은 "n / 전체" 를 다시 계산하게 하려고 구독한다.
-  useStore((s) => s.searchPos);
-  useStore((s) => s.pages);
-  const input = useRef<HTMLInputElement>(null);
-  const [text, setText] = useState(search.raw); // 다른 탭에 다녀와도 찾던 말이 남아 있게
-
-  useEffect(() => {
-    if (!focusTick) return;
-    input.current?.focus();
-    input.current?.select();
-  }, [focusTick]);
-  // 문서를 닫으면 찾던 말도 비운다.
-  useEffect(() => {
-    if (!search.query && !search.running) setText((t) => (compactText(t) ? '' : t));
-  }, [search]);
-
-  const go = (dir: 1 | -1) => {
-    if (compactText(text) !== search.query) void runSearch(text);
-    else stepSearch(dir);
-  };
-  const { ordinal, total } = searchSummary();
-  const status = !search.query
-    ? '띄어쓰기와 대소문자는 구분하지 않습니다.'
-    : search.running
-      ? `찾는 중… ${search.done}/${search.total}쪽 · ${total}곳`
-      : total
-        ? `${ordinal} / ${total}곳`
-        : '찾는 말이 없습니다. (스캔 이미지로만 된 쪽에는 글자가 없습니다)';
-
-  return (
-    <section>
-      <h3>본문 찾기</h3>
-      <div className="row">
-        <input
-          ref={input}
-          className="find-input"
-          type="search"
-          placeholder="찾을 말"
-          value={text}
-          onChange={(e) => {
-            setText(e.target.value);
-            if (!e.target.value) clearSearch();
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              go(e.shiftKey ? -1 : 1);
-            } else if (e.key === 'Escape') {
-              e.currentTarget.blur();
-            }
-          }}
-        />
-        <button onClick={() => go(-1)} disabled={!compactText(text)} title="이전 (Shift+Enter)">
-          ◀
-        </button>
-        <button onClick={() => go(1)} disabled={!compactText(text)} title="다음 (Enter)">
-          ▶
-        </button>
-      </div>
-      <p className="muted find-status">{status}</p>
-    </section>
   );
 }
 

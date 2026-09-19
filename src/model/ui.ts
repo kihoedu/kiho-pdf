@@ -55,8 +55,6 @@ export const SHORTCUTS: ShortcutDef[] = [
   { group: '이동·보기', keys: ['←', 'PgUp'], desc: '이전 쪽', codes: ['arrowleft', 'pageup'] },
   { group: '이동·보기', keys: ['→', 'PgDn'], desc: '다음 쪽', codes: ['arrowright', 'pagedown'] },
   { group: '이동·보기', keys: ['Home', 'End'], desc: '첫 쪽 / 마지막 쪽', codes: ['home', 'end'] },
-  { group: '이동·보기', keys: ['Ctrl+F'], desc: '본문 찾기(보기 탭의 찾기 칸으로 이동)', codes: ['mod+f'] },
-  { group: '이동·보기', keys: ['Enter', 'Shift+Enter'], desc: '(찾기 칸) 다음 / 이전 일치로 이동' },
   { group: '이동·보기', keys: ['Ctrl+휠'], desc: '확대 / 축소' },
   { group: '이동·보기', keys: ['휠(끝에서 계속)'], desc: '쪽의 맨 위·맨 아래에서 더 굴리면 이전·다음 쪽으로 넘어갑니다' },
 

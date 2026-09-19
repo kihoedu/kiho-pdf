@@ -29,8 +29,10 @@ test('편집 메뉴에는 선택·텍스트·펜만 있다', async ({ page }) =>
   // 없어진 도구의 단축키는 아무 일도 하지 않는다
   for (const k of ['h', 'r', 'l']) await page.keyboard.press(k);
   await expect(page.locator('.tool-grid button.on')).toHaveText('↖ 선택');
-  // 검색 탭도 없다(본문 찾기는 보기 탭 안에 있다)
+  // 검색 탭도, 보기 탭 안의 찾기 칸도 없다
   await expect(page.locator('.tabs button')).toHaveText(['파일', '보기', '분할', '캡처', '페이지', '편집']);
+  await page.getByRole('button', { name: '보기', exact: true }).click();
+  await expect(page.locator('.side-body')).not.toContainText('찾기');
 });
 
 test('펜: 그린 선이 저장본에 그대로 그려지고, 이동·삭제·실행 취소가 된다', async ({ page }) => {

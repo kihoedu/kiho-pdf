@@ -5,7 +5,6 @@ import { forgetSources, restoreSource } from './engine/client';
 import { DEFAULT_CAPTURE_TEMPLATE, normalizeCaptures } from './model/captures';
 import { decodeEdits, type PageEdits } from './model/editsCodec';
 import { DEFAULT_TEMPLATE, normalize } from './model/groups';
-import type { SearchPos } from './model/search';
 import { addRot } from './model/geometry';
 import {
   DEFAULT_ZOOM,
@@ -73,12 +72,6 @@ interface State {
   groups: SplitGroup[];
   template: string;
   focusGroupId?: string;
-  /** 본문 찾기. raw 는 입력한 그대로, query 는 비교용으로 다듬은 값(model/search). counts 는 원본 쪽(pageTextKey) → 일치 수라서 쪽 순서를 바꾸거나 지워도 유효하다. */
-  search: { raw: string; query: string; counts: Record<string, number>; done: number; total: number; running: boolean };
-  /** 지금 가리키는 일치. */
-  searchPos?: SearchPos;
-  /** 값이 바뀌면 보기 탭의 찾기 칸으로 포커스를 옮긴다(Ctrl+F). */
-  searchFocusTick: number;
   helpOpen: boolean;
   busy?: string;
   toast?: { kind: 'info' | 'error'; text: string };
@@ -121,7 +114,6 @@ interface State {
   setTemplate(tpl: string): void;
   undo(): void;
   redo(): void;
-  openSearch(): void;
   setHelp(open: boolean): void;
   setBusy(text?: string): void;
   notify(kind: 'info' | 'error', text: string): void;
@@ -129,7 +121,6 @@ interface State {
 }
 
 const HISTORY_LIMIT = 100;
-export const NO_SEARCH: State['search'] = { raw: '', query: '', counts: {}, done: 0, total: 0, running: false };
 
 export const baseName = (s?: Source): string => (s ? s.name.replace(/\.pdf$/i, '') : '문서');
 
@@ -178,8 +169,6 @@ export const useStore = create<State>((set, get) => {
     capturesUnsaved: false,
     groups: [],
     template: DEFAULT_TEMPLATE,
-    search: NO_SEARCH,
-    searchFocusTick: 0,
     helpOpen: false,
     dirty: false,
     past: [],
@@ -289,8 +278,6 @@ export const useStore = create<State>((set, get) => {
         future: [],
         dirty: false,
         activeTextId: undefined,
-        search: NO_SEARCH,
-        searchPos: undefined,
       });
       await Promise.all(Object.values(sources).map((s) => s.loaded.destroy().catch(() => {})));
     },
@@ -484,11 +471,6 @@ export const useStore = create<State>((set, get) => {
     },
 
     setPaneSize: (w, h) => set({ paneSize: { w, h } }),
-    openSearch() {
-      if (!get().pages.length) return;
-      get().setTab('view');
-      set({ searchFocusTick: get().searchFocusTick + 1 });
-    },
     setHelp: (helpOpen) => set({ helpOpen }),
     setBusy: (busy) => set({ busy }),
     notify: (kind, text) => set({ toast: { kind, text } }),
