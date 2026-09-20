@@ -44,7 +44,7 @@ npm run typecheck && npm test && npm run e2e
   워커가 브라우저를 직접 띄우면 Windows 에서 임시 프로필 정리가 끝나지 않아 실행이 멈춘다(설명은 global-setup.ts). 이 구조를 되돌리지 않는다.
 - 이 앱이 저장한 파일은 다시 열면 삽입 항목이 오버레이로 되살아난다. 저장본의 본문에 실제로 그려진 결과를 검증하려면
   열기 전에 `window.__kihoTune = { noRestore: true }` 를 넣는다(`src/devTune.ts`, 개발 서버 전용).
-- 화면 확인: `node bench/shot.mjs <split|text|capture|pen|find|file|help>` → `bench/out/shot-*.png` (개발 서버가 떠 있어야 한다).
+- 화면 확인: `node bench/shot.mjs <split|text|capture|pen|file|help>` → `bench/out/shot-*.png` (개발 서버가 떠 있어야 한다).
 - 속도 측정: `npm run bench:open`(열기 → 첫 화면), `npm run bench:split`, `npm run bench:thumb` — README 의 벤치마크 절 참고.
 - 의존성을 추가·교체하면 `THIRD-PARTY-NOTICES.md` 를, 릴리스할 때는 `CHANGELOG.md` 와 `package.json` 의 `version` 을 함께 고친다.
   배포 절차는 `docs/DEPLOY.md`.

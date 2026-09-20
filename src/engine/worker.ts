@@ -18,8 +18,9 @@ import {
 } from '@cantoo/pdf-lib';
 import fontkit from '@cantoo/fontkit';
 import { optimizeImages } from './optimize';
+import { fullPageImage } from './pageImage';
 import { markDocument, recordEdits, restoreEdits, snapshotPage } from './pieceInfo';
-import type { BuildRequest, EngineRequest, EngineResponse, RestoreRequest } from './protocol';
+import type { BuildRequest, EngineRequest, EngineResponse, RestoreRequest, ThumbRequest } from './protocol';
 
 // 원본은 한 번만 파싱해 두고 분할·저장에 재사용한다.
 const parsed = new Map<string, Promise<PDFDocument>>();
@@ -139,6 +140,53 @@ async function restore(req: RestoreRequest): Promise<void> {
   }
 }
 
+/**
+ * 썸네일 빠른 경로: 쪽 전체를 덮는 이미지가 있으면 여기서 "디코딩하면서 축소"까지 끝내고 작은 비트맵만 넘긴다.
+ * 맞지 않는 쪽은 비트맵 없이 답해 호출 쪽이 PDF.js 로 그리게 한다. 실패도 마찬가지로 다뤄 그리기가 멈추지 않게 한다.
+ */
+async function thumb(req: ThumbRequest): Promise<void> {
+  const none = () => post({ type: 'thumb', jobId: req.jobId });
+  let info: ReturnType<typeof fullPageImage>;
+  let box: { width: number; height: number };
+  let rotate = 0;
+  try {
+    const page = (await loadSource(req.source)).getPages()[req.index];
+    if (!page) return none();
+    info = fullPageImage(page);
+    if (!info) return none();
+    box = page.getCropBox();
+    // 이미지는 쪽이 돌기 전 방향으로 들어 있다. 원본 /Rotate 에 사용자 회전을 더한 만큼 돌려야 화면과 같아진다.
+    rotate = (((page.getRotation().angle + req.rotate) % 360) + 360) % 360;
+  } catch {
+    return none(); // 암호·손상 등으로 못 읽으면 조용히 기존 경로로 넘긴다
+  }
+
+  const swap = rotate % 180 !== 0;
+  const viewW = swap ? box.height : box.width;
+  const viewH = swap ? box.width : box.height;
+  const scale = Math.min(req.maxW / viewW, req.maxH / viewH);
+  // 내림으로 맞춘다 — PDF.js 경로(pdf/render.ts)도 내림이라 두 경로의 결과 크기가 같아야 한다.
+  const outW = Math.max(1, Math.floor(viewW * scale));
+  const outH = Math.max(1, Math.floor(viewH * scale));
+
+  // 원본 크기로 펼치지 않고 목표 크기로 바로 디코딩한다 — 이것이 빠른 이유다.
+  const bmp = await createImageBitmap(new Blob([info.bytes as Uint8Array<ArrayBuffer>], { type: info.mime }), {
+    resizeWidth: swap ? outH : outW,
+    resizeHeight: swap ? outW : outH,
+    resizeQuality: 'medium',
+  });
+  if (!rotate) return post({ type: 'thumb', jobId: req.jobId, bitmap: bmp }, [bmp]);
+
+  const canvas = new OffscreenCanvas(outW, outH);
+  const g = canvas.getContext('2d')!;
+  g.translate(outW / 2, outH / 2);
+  g.rotate((rotate * Math.PI) / 180);
+  g.drawImage(bmp, -bmp.width / 2, -bmp.height / 2);
+  bmp.close();
+  const rotated = canvas.transferToImageBitmap();
+  post({ type: 'thumb', jobId: req.jobId, bitmap: rotated }, [rotated]);
+}
+
 self.onmessage = (e: MessageEvent<EngineRequest>) => {
   const req = e.data;
   if (req.type === 'forget') {
@@ -146,7 +194,8 @@ self.onmessage = (e: MessageEvent<EngineRequest>) => {
     else parsed.clear();
     return;
   }
-  (req.type === 'restore' ? restore(req) : build(req)).catch((err) =>
+  const run = req.type === 'restore' ? restore(req) : req.type === 'thumb' ? thumb(req) : build(req);
+  run.catch((err) =>
     post({ type: 'error', jobId: req.jobId, message: err instanceof Error ? err.message : String(err) }),
   );
 };

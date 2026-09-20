@@ -2,9 +2,10 @@
 //   node bench/thumb-bench.mjs [쪽수=40]          합성 스캔본으로 A·B·C 비교
 //   node bench/thumb-bench.mjs <실제.pdf> [최대쪽=60]  실제 파일로 A·B 비교(파일은 bench/samples/_real.pdf 로 복사된다)
 // 스캔본형 PDF(쪽마다 300dpi A4 JPEG 1장)를 만들어 다음을 잰다.
-//   A. 현재 방식: PDF.js 워커 1개, 동시 2건
+//   A. PDF.js 워커 1개, 동시 2건(빠른 경로가 없던 시절의 방식)
 //   B. PDF.js 워커 N개로 나눠 그리기
-//   C. 내장 JPEG 을 PDF.js 없이 브라우저 디코더로 바로 축소(createImageBitmap resize)
+//   C. 내장 JPEG 을 PDF.js 없이 브라우저 디코더로 바로 축소(createImageBitmap resize) — 빠른 경로의 원리
+//   D. 앱의 실제 썸네일 경로(pdf/thumbs.ts)를 빠른 경로 끄고/켜고 견준다 — 실제로 얼마나 빨라졌는지
 import { chromium } from '@playwright/test';
 import { PDFDocument } from '@cantoo/pdf-lib';
 import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -116,7 +117,7 @@ const result = await page.evaluate(
     out.B_3workers = await withWorkers(3, 2);
     out.B_4workers = await withWorkers(4, 2);
 
-    if (!jpegB64.length) return out; // 실제 파일: 원본 JPEG 을 꺼내는 경로는 앱에 구현돼야 잴 수 있다
+    if (!jpegB64.length) return out; // 실제 파일: 합성 샘플에서만 아래 C 를 잰다
     // C. JPEG 직접 디코딩: 브라우저 디코더가 축소까지 한다(메인 스레드 밖)
     const blobs = jpegB64.map((b) => new Blob([Uint8Array.from(atob(b), (ch) => ch.charCodeAt(0))], { type: 'image/jpeg' }));
     const direct = async (conc) => {
@@ -145,4 +146,55 @@ PAGES = result.pages;
 const per = (r) => `${String(r.ms).padStart(5)} ms  ${(r.ms / PAGES).toFixed(1).padStart(5)} ms/쪽  ${(PAGES / (r.ms / 1000)).toFixed(0).padStart(3)} 쪽/초   메인 스레드 막힘 ${String(r.blockedMs).padStart(5)} ms (최장 ${r.worstMs} ms)`;
 console.log(`\n${PAGES}쪽 썸네일 전체 렌더 시간 — 논리 코어 ${result.cores}개`);
 for (const [k, v] of Object.entries(result)) if (typeof v === 'object') console.log(`  ${k.padEnd(22)} ${per(v)}`);
+// D. 앱이 실제로 쓰는 경로(pdf/thumbs.ts)를 빠른 경로 끄고/켜고 견준다. 앞 측정과 섞이지 않도록 새 탭에서 잰다.
+const appPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+appPage.on('pageerror', (e) => console.log('pageerror:', e.message));
+await appPage.goto('http://localhost:5173/');
+const app = await appPage.evaluate(
+  async ([fileName, maxPages]) => {
+    const { useStore: store, renderThumb, clearRenderCaches, THUMB_CONCURRENCY } = window.__kiho;
+    const blob = await (await fetch('/bench/samples/' + fileName)).blob();
+    await store.getState().openFiles([{ file: new File([blob], fileName, { type: 'application/pdf' }) }], 'replace');
+    await new Promise((r) => setTimeout(r, 800)); // 화면의 썸네일이 먼저 다 그려지기를 기다린다
+    const src = Object.values(store.getState().sources)[0];
+    const n = Math.min(maxPages, store.getState().pages.length);
+    const pool = async (items, c, fn) => {
+      let i = 0;
+      await Promise.all(Array.from({ length: c }, async () => { while (i < items.length) await fn(items[i++]); }));
+    };
+    const run = async (fast) => {
+      window.__kihoTune = { noFastThumb: !fast };
+      clearRenderCaches();
+      // PDF.js 가 쪽마다 들고 있는 "이미 디코딩한 이미지"까지 버려야 두 경로를 같은 조건에서 잰다.
+      for (let i = 0; i < n; i++) (await src.loaded.getPage(i)).cleanup();
+      const items = store.getState().pages.slice(0, n);
+      let blocked = 0, worst = 0, last = performance.now();
+      const id = setInterval(() => {
+        const now = performance.now();
+        const late = now - last - 4;
+        if (late > 8) { blocked += late; worst = Math.max(worst, late); }
+        last = now;
+      }, 4);
+      const t0 = performance.now();
+      // 앱과 같은 동시성으로: 빠른 경로는 메인 스레드를 쓰지 않아 더 겹쳐 돌린다(pdf/caches.ts THUMB_CONCURRENCY).
+      await pool(items, fast ? THUMB_CONCURRENCY.fast : THUMB_CONCURRENCY.pdfjs, (it) => renderThumb(it, 120, 160, 2));
+      const ms = Math.round(performance.now() - t0);
+      clearInterval(id);
+      return { ms, blockedMs: Math.round(blocked), worstMs: Math.round(worst) };
+    };
+    await run(true); // 워밍업(워커의 pdf-lib 파싱까지 끝내 둔다)
+    const out = { pages: n };
+    out.D_app_pdfjs = await run(false);
+    out.D_app_fastPath = await run(true);
+    return out;
+  },
+  [sampleName, PAGES],
+);
+console.log(`
+앱의 실제 썸네일 경로 — ${app.pages}쪽`);
+for (const k of ['D_app_pdfjs', 'D_app_fastPath']) {
+  const r = app[k];
+  console.log(`  ${k.padEnd(22)} ${String(r.ms).padStart(5)} ms  ${(r.ms / app.pages).toFixed(1).padStart(5)} ms/쪽  ${(app.pages / (r.ms / 1000)).toFixed(0).padStart(3)} 쪽/초   메인 스레드 막힘 ${String(r.blockedMs).padStart(5)} ms (최장 ${r.worstMs} ms)`);
+}
+
 await browser.close();

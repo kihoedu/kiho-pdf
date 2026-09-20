@@ -9,6 +9,8 @@ export interface DevTune {
   wholeFileLimit?: number;
   /** 구간 읽기 한 번의 크기(바이트). */
   rangeChunk?: number;
+  /** 썸네일 빠른 경로를 끄고 항상 PDF.js 로 그린다(두 경로의 결과·속도를 견줄 때). */
+  noFastThumb?: boolean;
 }
 
 export const devTune = (): DevTune =>

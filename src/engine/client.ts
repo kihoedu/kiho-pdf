@@ -10,6 +10,7 @@ const jobs = new Map<
     onOutput: OutputHandler;
     onProgress?: (text: string) => void;
     onRestored?: (pages: RestoredPage[], bytes?: Uint8Array) => void;
+    onThumb?: (bitmap?: ImageBitmap) => void;
     pending: Promise<void>[];
     resolve: () => void;
     reject: (e: Error) => void;
@@ -27,6 +28,10 @@ function getWorker(): Worker {
       job.pending.push(Promise.resolve(job.onOutput(msg.index, msg.name, msg.bytes, msg.stats)));
     } else if (msg.type === 'progress') {
       job.onProgress?.(msg.text);
+    } else if (msg.type === 'thumb') {
+      jobs.delete(msg.jobId);
+      job.onThumb?.(msg.bitmap);
+      job.resolve();
     } else if (msg.type === 'restored') {
       jobs.delete(msg.jobId);
       job.onRestored?.(msg.pages, msg.bytes);
@@ -75,6 +80,31 @@ export function restoreSource(source: BuildRequest['sources'][number]): Promise<
       reject,
     });
     getWorker().postMessage({ type: 'restore', jobId, source } satisfies EngineRequest);
+  });
+}
+
+/**
+ * 썸네일 빠른 경로(engine/pageImage.ts). 쪽 전체를 덮는 이미지가 있으면 워커가 축소 디코딩까지 마친 비트맵을 돌려준다.
+ * 맞지 않는 쪽이거나 읽지 못하면 undefined — 호출 쪽은 지금까지대로 PDF.js 로 그린다.
+ */
+export function fastThumb(
+  source: BuildRequest['sources'][number],
+  index: number,
+  maxW: number,
+  maxH: number,
+  rotate: number,
+): Promise<ImageBitmap | undefined> {
+  const jobId = nextJob++;
+  return new Promise((resolve) => {
+    let bitmap: ImageBitmap | undefined;
+    jobs.set(jobId, {
+      onOutput: () => {},
+      onThumb: (b) => (bitmap = b),
+      pending: [],
+      resolve: () => resolve(bitmap),
+      reject: () => resolve(undefined), // 실패해도 썸네일 그리기를 멈추지 않는다
+    });
+    getWorker().postMessage({ type: 'thumb', jobId, source, index, maxW, maxH, rotate } satisfies EngineRequest);
   });
 }
 

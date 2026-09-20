@@ -1,18 +1,18 @@
 import { memo, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react';
-import { addRot, viewSize } from '../model/geometry';
 import { GROUP_COLORS, groupIndexByPage, toggleCut } from '../model/groups';
 import { hasEdits, type PageItem } from '../model/types';
-import { pageBox, pageRot } from '../pdf/loader';
-import { thumbCache, thumbQueue } from '../pdf/caches';
-import { renderToCanvas } from '../pdf/render';
-import { getPdfPage, useStore } from '../store';
+import { thumbQueue } from '../pdf/caches';
+import { renderThumb } from '../pdf/thumbs';
+import { useStore } from '../store';
 
 const THUMB_W = 120;
 const THUMB_H = 160;
 const CELL_W = 144;
 const CELL_H = 196;
 const PAD = 8;
-const OVERSCAN_ROWS = 2;
+/** 화면 밖으로 미리 그려 두는 줄 수. 가는 방향은 더 넉넉히 잡아 스크롤을 따라가게 한다. */
+const OVERSCAN_AHEAD = 4;
+const OVERSCAN_BEHIND = 2;
 
 
 export function Thumbnails() {
@@ -26,6 +26,9 @@ export function Thumbnails() {
   const [height, setHeight] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
   const [dropAt, setDropAt] = useState<number>();
+  // 아래로 굴리는 중이면 아래쪽을, 위로 굴리는 중이면 위쪽을 더 미리 그린다.
+  const down = useRef(true);
+  const lastTop = useRef(0);
 
   useEffect(() => {
     const el = host.current!;
@@ -51,8 +54,8 @@ export function Thumbnails() {
 
   const groupOf = useMemo(() => groupIndexByPage(groups, pages.length), [groups, pages.length]);
 
-  const firstRow = Math.max(0, Math.floor((scrollTop - PAD) / CELL_H) - OVERSCAN_ROWS);
-  const lastRow = Math.min(rows - 1, Math.floor((scrollTop + height) / CELL_H) + OVERSCAN_ROWS);
+  const firstRow = Math.max(0, Math.floor((scrollTop - PAD) / CELL_H) - (down.current ? OVERSCAN_BEHIND : OVERSCAN_AHEAD));
+  const lastRow = Math.min(rows - 1, Math.floor((scrollTop + height) / CELL_H) + (down.current ? OVERSCAN_AHEAD : OVERSCAN_BEHIND));
   const from = firstRow * cols;
   const to = Math.min(pages.length, (lastRow + 1) * cols);
 
@@ -68,7 +71,13 @@ export function Thumbnails() {
     <div
       className="thumbs"
       ref={host}
-      onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+      onScroll={(e) => {
+        // currentTarget 은 핸들러가 끝나면 비워지므로 여기서 값을 꺼내 둔다(상태 갱신 함수 안에서 읽으면 null 이다).
+        const top = e.currentTarget.scrollTop;
+        if (top !== lastTop.current) down.current = top > lastTop.current;
+        lastTop.current = top;
+        setScrollTop(top);
+      }}
       onDragOver={(e) => e.dataTransfer.types.includes('application/x-kiho-pages') && e.preventDefault()}
       onDrop={onDrop}
       onDragLeave={(e) => e.currentTarget === e.target && setDropAt(undefined)}
@@ -133,20 +142,7 @@ const Thumb = memo(function Thumb(p: ThumbProps) {
     };
     thumbQueue.push(
       () => alive,
-      async () => {
-        const page = await getPdfPage(item);
-        const rot = addRot(pageRot(page), item.userRot);
-        const key = `${item.uid}|${rot}`;
-        let canvas = thumbCache.get(key);
-        if (!canvas) {
-          if (!alive) return;
-          const v = viewSize(pageBox(page), rot);
-          const scale = Math.min(THUMB_W / v.w, THUMB_H / v.h);
-          canvas = await renderToCanvas(page, scale, rot, Math.min(window.devicePixelRatio || 1, 2)).promise;
-          thumbCache.set(key, canvas);
-        }
-        place(canvas);
-      },
+      async () => place(await renderThumb(item, THUMB_W, THUMB_H, Math.min(window.devicePixelRatio || 1, 2))),
     );
     return () => {
       alive = false;

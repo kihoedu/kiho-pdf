@@ -67,6 +67,12 @@ export class ThumbQueue {
   #stack: { wanted: () => boolean; run: () => Promise<void> }[] = [];
   #running = 0;
   constructor(private concurrency = 2) {}
+  /** 일이 메인 스레드를 쓰지 않는 동안에는 더 많이 돌려도 된다(pdf/thumbs.ts 의 빠른 경로). */
+  setConcurrency(n: number): void {
+    if (n === this.concurrency) return;
+    this.concurrency = n;
+    this.#pump();
+  }
   push(wanted: () => boolean, run: () => Promise<void>): void {
     this.#stack.push({ wanted, run });
     this.#pump();

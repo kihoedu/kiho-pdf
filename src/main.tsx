@@ -1,10 +1,15 @@
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import { THUMB_CONCURRENCY, clearRenderCaches, fastThumbState } from './pdf/caches';
+import { renderThumb } from './pdf/thumbs';
 import { useStore } from './store';
 import './styles.css';
 
-// 개발 중 콘솔/자동화에서 상태를 들여다보기 위한 훅
-if (import.meta.env.DEV) Object.assign(window, { __kiho: { useStore } });
+// 개발 중 콘솔·자동화(E2E, bench)에서 쓰는 훅. 벤치가 모듈을 따로 import 하면 개발 서버의 HMR 때문에
+// 앱과 다른 사본을 잡을 수 있으므로(캐시가 서로 달라진다), 앱이 실제로 쓰는 것을 그대로 내보낸다.
+if (import.meta.env.DEV) {
+  Object.assign(window, { __kiho: { useStore, renderThumb, clearRenderCaches, fastThumbState, THUMB_CONCURRENCY } });
+}
 
 createRoot(document.getElementById('root')!).render(<App />);
 

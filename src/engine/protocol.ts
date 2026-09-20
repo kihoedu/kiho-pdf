@@ -71,12 +71,31 @@ export interface RestoredPage {
   edits: string;
 }
 
-export type EngineRequest = BuildRequest | RestoreRequest | { type: 'forget'; srcIds?: string[] };
+/**
+ * 썸네일 빠른 경로 요청(engine/pageImage.ts). 쪽 전체를 덮는 이미지가 있으면 워커가 "디코딩하면서 축소"까지 마치고
+ * 작은 비트맵만 돌려준다. 큰 이미지 바이트가 메인 스레드로 넘어오지 않고, 디코딩도 메인 스레드 밖에서 끝난다.
+ */
+export interface ThumbRequest {
+  type: 'thumb';
+  jobId: number;
+  source: BuildRequest['sources'][number];
+  /** 0-based 쪽 번호 */
+  index: number;
+  /** 결과 비트맵이 들어갈 최대 크기(px) */
+  maxW: number;
+  maxH: number;
+  /** 사용자가 쪽에 더한 회전. 원본 /Rotate 는 워커가 스스로 더한다. */
+  rotate: number;
+}
+
+export type EngineRequest = BuildRequest | RestoreRequest | ThumbRequest | { type: 'forget'; srcIds?: string[] };
 
 export type EngineResponse =
   | { type: 'output'; jobId: number; index: number; name: string; bytes: Uint8Array; stats?: OptimizeStats }
   /** pages 가 비어 있으면 되살릴 것이 없다는 뜻이고 bytes 도 없다. bytes 는 그려 넣은 부분을 걷어 낸 PDF. */
   | { type: 'restored'; jobId: number; pages: RestoredPage[]; bytes?: Uint8Array }
+  /** bitmap 이 없으면 이 쪽은 빠른 경로에 맞지 않는다는 뜻(호출 쪽이 PDF.js 로 그린다). */
+  | { type: 'thumb'; jobId: number; bitmap?: ImageBitmap }
   | { type: 'progress'; jobId: number; text: string }
   | { type: 'done'; jobId: number }
   | { type: 'error'; jobId: number; message: string };

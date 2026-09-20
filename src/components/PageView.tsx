@@ -4,6 +4,7 @@ import { addRot, viewSize } from '../model/geometry';
 import { CSS_UNITS, type Box, type PageItem, type Rot } from '../model/types';
 import { pageBox, pageRot } from '../pdf/loader';
 import { pageCache, thumbCache } from '../pdf/caches';
+import { thumbKey } from '../pdf/thumbs';
 import { isCancel, renderToCanvas, type RenderHandle } from '../pdf/render';
 import { getPdfPage, useStore } from '../store';
 import { Overlay } from './Overlay';
@@ -64,7 +65,7 @@ export function PageView() {
         show(hit);
       } else {
         // 본 렌더가 끝날 때까지 썸네일을 늘려서 먼저 보여 준다.
-        const thumb = thumbCache.get(`${item.uid}|${rot}`);
+        const thumb = thumbCache.get(thumbKey(item));
         if (thumb) show(cloneCanvas(thumb));
         handle = renderToCanvas(page, scale, rot, dpr());
         const canvas = await handle.promise;
